@@ -17,6 +17,8 @@
   // --- Initial State Keys ---
   const STORAGE_KEY = 'smart_study_planner_tasks';
   const STORAGE_HOURS_KEY = 'smart_study_planner_hours';
+  const STORAGE_SESSIONS_KEY = 'smart_study_planner_sessions';
+  const STORAGE_RECOVERY_KEY = 'smart_study_planner_recovery';
 
   // Sample seed tasks to showcase the UI immediately on first load
   const defaultTasks = [
@@ -56,6 +58,9 @@
 
   let tasks = loadTasks();
   let availableHours = loadAvailableHours();
+  let sessionRecords = loadSessionRecords();
+  let recoveryNotice = loadRecoveryNotice();
+  let currentActivePlan = null;
   let currentFilter = 'all';
   let currentScheduleView = 'timeline'; // 'timeline' or 'calendar'
   let editingTaskId = null;
@@ -97,6 +102,11 @@
   const allocationFill = document.getElementById('allocation-fill');
   const generatePlanBtn = document.getElementById('generate-plan-btn');
   const generatePlanBtnText = document.getElementById('generate-plan-btn-text');
+
+  // Deadline Collision Recovery Notice Banner
+  const recoveryBanner = document.getElementById('recovery-banner');
+  const recoveryBannerTitle = document.getElementById('recovery-banner-title');
+  const recoveryBannerBody = document.getElementById('recovery-banner-body');
 
   // Conflict Banner & Unscheduled Section
   const conflictBanner = document.getElementById('conflict-banner');
@@ -192,6 +202,202 @@
     }
   }
 
+  // --- Session & Collision Recovery Persistence ---
+
+  function loadSessionRecords() {
+    try {
+      const saved = localStorage.getItem(STORAGE_SESSIONS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (e) {
+      console.warn('LocalStorage unavailable for session records.', e);
+    }
+    return {};
+  }
+
+  function saveSessionRecords() {
+    try {
+      localStorage.setItem(STORAGE_SESSIONS_KEY, JSON.stringify(sessionRecords));
+    } catch (e) {
+      console.warn('Failed to save session records', e);
+    }
+  }
+
+  function loadRecoveryNotice() {
+    try {
+      const saved = localStorage.getItem(STORAGE_RECOVERY_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch (e) {
+      console.warn('LocalStorage unavailable for recovery notice.', e);
+    }
+    return null;
+  }
+
+  function saveRecoveryNotice(notice) {
+    try {
+      if (notice) {
+        localStorage.setItem(STORAGE_RECOVERY_KEY, JSON.stringify(notice));
+      } else {
+        localStorage.removeItem(STORAGE_RECOVERY_KEY);
+      }
+    } catch (e) {
+      console.warn('Failed to save recovery notice', e);
+    }
+  }
+
+  function parseTimeToDate(timeStr) {
+    const now = new Date();
+    if (!timeStr || typeof timeStr !== 'string') {
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+    }
+    const parts = timeStr.split(':');
+    const h = parseInt(parts[0], 10) || 9;
+    const m = parseInt(parts[1], 10) || 0;
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+  }
+
+  function getTaskCompletedMinutes(taskId) {
+    if (!sessionRecords) return 0;
+    return Object.values(sessionRecords)
+      .filter(s => s && s.taskId === taskId && s.status === 'completed')
+      .reduce((sum, s) => sum + (Number(s.duration) || 0), 0);
+  }
+
+  function getTaskUnfinishedMinutes(task) {
+    if (task.completed) return 0;
+    const doneMin = getTaskCompletedMinutes(task.id);
+    return Math.max(0, (Number(task.duration) || 0) - doneMin);
+  }
+
+  function findSessionById(sessionId) {
+    if (sessionRecords && sessionRecords[sessionId]) return sessionRecords[sessionId];
+    if (currentActivePlan) {
+      if (Array.isArray(currentActivePlan.scheduledTimelineBlocks)) {
+        const found = currentActivePlan.scheduledTimelineBlocks.find(b => b.sessionId === sessionId || b.id === sessionId);
+        if (found) return found;
+      }
+      if (Array.isArray(currentActivePlan.generatedSessions)) {
+        const foundS = currentActivePlan.generatedSessions.find(s => s.id === sessionId);
+        if (foundS) return foundS;
+      }
+    }
+    return null;
+  }
+
+  function markSessionCompleted(sessionId, taskId) {
+    const session = findSessionById(sessionId);
+    const resolvedTaskId = (session && session.taskId) || taskId;
+
+    if (session && session.status === 'completed') {
+      return; // Already completed, avoid duplicate actions
+    }
+
+    const duration = session ? (Number(session.duration) || 30) : 30;
+    const subject = session ? session.subject : 'Study Session';
+
+    sessionRecords[sessionId] = {
+      id: sessionId,
+      sessionId: sessionId,
+      taskId: resolvedTaskId,
+      subject: subject,
+      duration: duration,
+      start: (session && session.start) || '09:00',
+      end: (session && session.end) || '09:30',
+      startDate: session && session.startDate ? (session.startDate instanceof Date ? session.startDate.toISOString() : session.startDate) : undefined,
+      endDate: session && session.endDate ? (session.endDate instanceof Date ? session.endDate.toISOString() : session.endDate) : undefined,
+      priority: (session && session.priority) || 'medium',
+      deadline: (session && session.deadline) || '',
+      status: 'completed',
+      completedAt: Date.now()
+    };
+    saveSessionRecords();
+
+    // Check if task is fully completed
+    if (resolvedTaskId) {
+      const task = tasks.find(t => t.id === resolvedTaskId);
+      if (task) {
+        const doneMin = getTaskCompletedMinutes(resolvedTaskId);
+        if (doneMin >= Number(task.duration)) {
+          task.completed = true;
+          saveTasks();
+        }
+      }
+    }
+
+    renderTasks();
+  }
+
+  async function markSessionMissed(sessionId, taskId) {
+    const session = findSessionById(sessionId);
+    const resolvedTaskId = (session && session.taskId) || taskId;
+
+    if (!session && !sessionId) {
+      console.warn('Cannot mark missed: session not found', sessionId);
+      return;
+    }
+
+    if (session && session.status === 'completed') {
+      console.warn('Prevented: cannot mark completed session as missed.');
+      return;
+    }
+
+    if (session && session.status === 'missed') {
+      console.warn('Prevented: session is already marked as missed.');
+      return;
+    }
+
+    const duration = session ? (Number(session.duration) || 30) : 30;
+    const subject = session ? session.subject : 'Study Session';
+
+    // Record session as missed
+    sessionRecords[sessionId] = {
+      id: sessionId,
+      sessionId: sessionId,
+      taskId: resolvedTaskId,
+      subject: subject,
+      duration: duration,
+      start: (session && session.start) || '09:00',
+      end: (session && session.end) || '09:30',
+      startDate: session && session.startDate ? (session.startDate instanceof Date ? session.startDate.toISOString() : session.startDate) : undefined,
+      endDate: session && session.endDate ? (session.endDate instanceof Date ? session.endDate.toISOString() : session.endDate) : undefined,
+      priority: (session && session.priority) || 'medium',
+      deadline: (session && session.deadline) || '',
+      status: 'missed',
+      missedAt: Date.now()
+    };
+    saveSessionRecords();
+
+    // If task was previously marked complete, re-open if work remains
+    if (resolvedTaskId) {
+      const task = tasks.find(t => t.id === resolvedTaskId);
+      if (task && task.completed) {
+        const doneMin = getTaskCompletedMinutes(resolvedTaskId);
+        if (doneMin < Number(task.duration)) {
+          task.completed = false;
+          saveTasks();
+        }
+      }
+    }
+
+    // Set clear recovery notification
+    const timeStr = formatTimeFromDate(new Date());
+    recoveryNotice = {
+      title: 'Deadline Collision Recovery Active',
+      message: `Session "${subject}" marked as missed at ${timeStr}. Remaining study workload automatically recalculated without manual intervention.`,
+      timestamp: Date.now()
+    };
+    saveRecoveryNotice(recoveryNotice);
+
+    // Automatically recalculate remaining schedule immediately
+    await generateStudyPlan();
+    updateMetrics();
+  }
+
   // --- Form Validation & Error Handling ---
 
   function setFieldError(field, errorEl, message) {
@@ -282,7 +488,32 @@
 
   async function generateStudyPlan() {
     const totalDailyBudgetMinutes = Math.round(availableHours * 60);
-    const activeTasks = tasks.filter(t => !t.completed);
+
+    // Collect historical completed and missed sessions
+    const completedSessions = Object.values(sessionRecords).filter(s => s && s.status === 'completed');
+    const missedSessions = Object.values(sessionRecords).filter(s => s && s.status === 'missed');
+    const completedMinutesToday = completedSessions.reduce((acc, s) => acc + (Number(s.duration) || 0), 0);
+    const remainingBudgetMinutes = Math.max(0, totalDailyBudgetMinutes - completedMinutesToday);
+
+    // Eligible unfinished tasks (only unfinished minutes scheduled)
+    const activeTasks = [];
+    tasks.forEach(t => {
+      if (t.completed) return;
+      const rawDur = Number(t.duration);
+      if (isNaN(rawDur) || rawDur <= 0) {
+        activeTasks.push(t);
+        return;
+      }
+      const doneMin = getTaskCompletedMinutes(t.id);
+      const remDur = Math.max(0, rawDur - doneMin);
+      if (remDur > 0) {
+        activeTasks.push({
+          ...t,
+          duration: remDur,
+          originalDuration: rawDur
+        });
+      }
+    });
 
     if (generatePlanBtn) {
       generatePlanBtn.disabled = true;
@@ -290,23 +521,29 @@
     }
 
     try {
-      // If there are active tasks, attempt to query the secure backend LLM bridge
-      if (activeTasks.length > 0 && typeof fetch === 'function') {
+      // If there are active tasks and remaining capacity, attempt LLM bridge
+      if (activeTasks.length > 0 && remainingBudgetMinutes > 0 && typeof fetch === 'function') {
         try {
           const response = await fetch('/api/generate-plan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               tasks: activeTasks,
-              availableHours: availableHours
+              availableHours: remainingBudgetMinutes / 60
             })
           });
 
           if (response.ok) {
             const data = await response.json();
             if (data.success && data.plan) {
-              // Validate the LLM output strictly before displaying
-              const validation = validateLLMPlanOutput(data.plan, activeTasks, totalDailyBudgetMinutes);
+              const validation = validateLLMPlanOutput(
+                data.plan,
+                activeTasks,
+                remainingBudgetMinutes,
+                completedSessions,
+                missedSessions,
+                totalDailyBudgetMinutes
+              );
               if (validation.isValid) {
                 activeEngineMode = data.engine || 'llm';
                 updateEngineBadge(true, data.provider);
@@ -318,7 +555,6 @@
             }
           }
         } catch (err) {
-          // Network or fetch failure -> fall through cleanly to deterministic fallback
           console.info('LLM endpoint not reachable. Using deterministic scheduler fallback.');
         }
       }
@@ -364,8 +600,8 @@
     }
   }
 
-  // --- Strict Validation of LLM-Generated Plan Output ---
-  function validateLLMPlanOutput(plan, activeTasks, budgetMinutes) {
+  // --- Strict Validation of LLM-Generated Plan Output (Preserving Historical Sessions) ---
+  function validateLLMPlanOutput(plan, activeTasks, budgetMinutes, completedSessions, missedSessions, totalDailyBudgetMinutes) {
     if (!plan || typeof plan !== 'object') {
       return { isValid: false, reason: 'LLM plan is not an object.' };
     }
@@ -375,16 +611,56 @@
       return { isValid: false, reason: 'scheduledBlocks is not an array.' };
     }
 
-    let totalDuration = 0;
+    let llmDuration = 0;
     const now = new Date();
-    const scheduledBlocks = [];
+    const scheduleAnchor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
 
+    // Build locked timeline blocks for completed & missed sessions
+    const lockedTimelineBlocks = [];
+    const lockedSessions = [...(completedSessions || []), ...(missedSessions || [])].sort((a, b) => {
+      const tA = a.startDate ? new Date(a.startDate).getTime() : parseTimeToDate(a.start).getTime();
+      const tB = b.startDate ? new Date(b.startDate).getTime() : parseTimeToDate(b.start).getTime();
+      return tA - tB;
+    });
+
+    let clockCursor = new Date(scheduleAnchor);
+    lockedSessions.forEach(s => {
+      const sStart = s.startDate ? new Date(s.startDate) : parseTimeToDate(s.start);
+      const sEnd = s.endDate ? new Date(s.endDate) : parseTimeToDate(s.end);
+      if (sEnd.getTime() >= clockCursor.getTime()) {
+        clockCursor = new Date(sEnd.getTime() + 5 * 60000);
+      }
+      lockedTimelineBlocks.push({
+        id: s.id,
+        sessionId: s.id,
+        type: 'study',
+        taskId: s.taskId,
+        subject: s.subject,
+        priority: s.priority || 'medium',
+        start: s.start || formatTimeFromDate(sStart),
+        end: s.end || formatTimeFromDate(sEnd),
+        startDate: sStart,
+        endDate: sEnd,
+        duration: Number(s.duration) || 30,
+        deadline: s.deadline || '',
+        status: s.status,
+        note: s.status === 'completed' ? 'Completed study session (Historical record preserved)' : 'Missed study session (Collision recovered)'
+      });
+    });
+
+    const llmScheduledBlocks = [];
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i];
       if (!b.subject || !b.duration || b.duration <= 0) {
         return { isValid: false, reason: `Block ${i} has invalid duration or missing subject.` };
       }
-      totalDuration += Number(b.duration);
+      const dur = Number(b.duration);
+      llmDuration += dur;
+
+      // Start and end computed from current clockCursor to ensure chronological sequencing
+      const blockStart = new Date(clockCursor);
+      const blockEnd = new Date(clockCursor.getTime() + dur * 60000);
+      clockCursor = new Date(blockEnd.getTime() + 5 * 60000);
 
       // Check deadline constraint
       if (b.deadline) {
@@ -394,79 +670,184 @@
         }
       }
 
-      scheduledBlocks.push({
+      const blockSessionId = b.sessionId || b.taskId ? `${b.taskId}-llm-${i}` : `session-llm-${i}`;
+      llmScheduledBlocks.push({
         type: b.type || 'study',
+        id: blockSessionId,
+        sessionId: blockSessionId,
         taskId: b.taskId || `task-llm-${i}`,
         subject: b.subject,
         priority: b.priority || 'medium',
-        start: b.start || '09:00',
-        end: b.end || '09:50',
-        duration: Number(b.duration),
+        start: formatTimeFromDate(blockStart),
+        end: formatTimeFromDate(blockEnd),
+        startDate: blockStart,
+        endDate: blockEnd,
+        duration: dur,
         deadline: b.deadline || '',
+        status: 'planned',
         note: b.note || 'AI-scheduled focus block'
       });
     }
 
-    if (totalDuration > budgetMinutes) {
-      return { isValid: false, reason: `LLM plan duration (${totalDuration}m) exceeds daily budget (${budgetMinutes}m).` };
+    if (llmDuration > budgetMinutes) {
+      return { isValid: false, reason: `LLM plan duration (${llmDuration}m) exceeds available budget (${budgetMinutes}m).` };
     }
 
     const unscheduledTasks = Array.isArray(plan.unscheduledTasks)
       ? plan.unscheduledTasks.map(u => ({ task: { subject: u.subject }, reason: u.reason }))
       : [];
 
+    const totalAllocated = (completedSessions || []).reduce((acc, s) => acc + (Number(s.duration) || 0), 0) + llmDuration;
+
+    const allBlocks = [...lockedTimelineBlocks, ...llmScheduledBlocks];
+    allBlocks.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+    const generatedSessions = [];
+    lockedSessions.forEach(s => {
+      generatedSessions.push({
+        id: s.id,
+        sessionId: s.id,
+        taskId: s.taskId,
+        subject: s.subject,
+        duration: Number(s.duration) || 30,
+        priority: s.priority || 'medium',
+        deadline: s.deadline || '',
+        status: s.status,
+        studySplit: Math.min(Number(s.duration) || 30, 50),
+        breakSplit: (Number(s.duration) || 30) > 50 ? 10 : 5
+      });
+    });
+
+    llmScheduledBlocks.filter(b => b.type === 'study').forEach(b => {
+      generatedSessions.push({
+        id: b.id,
+        sessionId: b.sessionId,
+        taskId: b.taskId,
+        subject: b.subject,
+        duration: b.duration,
+        priority: b.priority,
+        deadline: b.deadline,
+        status: 'planned',
+        studySplit: Math.min(b.duration, 50),
+        breakSplit: b.duration > 50 ? 10 : 5
+      });
+    });
+
     return {
       isValid: true,
       parsedPlan: {
-        totalDailyBudgetMinutes: budgetMinutes,
-        allocatedMinutes: totalDuration,
+        totalDailyBudgetMinutes: totalDailyBudgetMinutes || budgetMinutes,
+        allocatedMinutes: totalAllocated,
         conflicts: unscheduledTasks.map(u => ({ task: u.task, reason: u.reason })),
         unscheduledTasks: unscheduledTasks,
-        scheduledTimelineBlocks: scheduledBlocks,
-        generatedSessions: scheduledBlocks.filter(b => b.type === 'study').map((b, idx) => ({
-          id: `session-llm-${idx}`,
-          taskId: b.taskId,
-          subject: b.subject,
-          duration: b.duration,
-          priority: b.priority,
-          deadline: b.deadline,
-          studySplit: Math.min(b.duration, 50),
-          breakSplit: b.duration > 50 ? 10 : 5
-        }))
+        scheduledTimelineBlocks: allBlocks,
+        generatedSessions: generatedSessions
       }
     };
   }
 
   // ==========================================================================
-  // DETERMINISTIC SCHEDULING ENGINE (Preserved Fallback)
+  // DETERMINISTIC SCHEDULING ENGINE (Preserved Fallback & Recovery Engine)
   // ==========================================================================
 
   function generateDeterministicStudyPlan() {
     const totalDailyBudgetMinutes = Math.round(availableHours * 60);
-    let remainingBudgetMinutes = totalDailyBudgetMinutes;
-    let allocatedMinutes = 0;
+
+    // Collect historical completed and missed sessions
+    const completedSessions = Object.values(sessionRecords).filter(s => s && s.status === 'completed');
+    const missedSessions = Object.values(sessionRecords).filter(s => s && s.status === 'missed');
+    const completedMinutesToday = completedSessions.reduce((acc, s) => acc + (Number(s.duration) || 0), 0);
+    let remainingBudgetMinutes = Math.max(0, totalDailyBudgetMinutes - completedMinutesToday);
+    let allocatedMinutes = completedMinutesToday;
 
     // Daily timeline start: 09:00 AM of today
     const now = new Date();
     const scheduleAnchor = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0);
+
+    // Build locked timeline blocks for completed & missed sessions
+    const lockedTimelineBlocks = [];
+    const lockedSessions = [...completedSessions, ...missedSessions].sort((a, b) => {
+      const tA = a.startDate ? new Date(a.startDate).getTime() : parseTimeToDate(a.start).getTime();
+      const tB = b.startDate ? new Date(b.startDate).getTime() : parseTimeToDate(b.start).getTime();
+      return tA - tB;
+    });
+
     let clockCursor = new Date(scheduleAnchor);
+    lockedSessions.forEach(s => {
+      const sStart = s.startDate ? new Date(s.startDate) : parseTimeToDate(s.start);
+      const sEnd = s.endDate ? new Date(s.endDate) : parseTimeToDate(s.end);
+      if (sEnd.getTime() >= clockCursor.getTime()) {
+        clockCursor = new Date(sEnd.getTime() + 5 * 60000);
+      }
+      lockedTimelineBlocks.push({
+        id: s.id,
+        sessionId: s.id,
+        type: 'study',
+        taskId: s.taskId,
+        subject: s.subject,
+        priority: s.priority || 'medium',
+        start: s.start || formatTimeFromDate(sStart),
+        end: s.end || formatTimeFromDate(sEnd),
+        startDate: sStart,
+        endDate: sEnd,
+        duration: Number(s.duration) || 30,
+        deadline: s.deadline || '',
+        status: s.status,
+        note: s.status === 'completed' ? 'Completed study session (Historical record preserved)' : 'Missed study session (Collision recovered)'
+      });
+    });
 
     const conflicts = [];
     const unscheduledTasks = [];
-    const scheduledTimelineBlocks = [];
-    const generatedSessions = [];
+    const newlyScheduledTimelineBlocks = [];
+    const newlyGeneratedSessions = [];
 
-    // Filter active (uncompleted) tasks
-    const activeTasks = tasks.filter(t => !t.completed);
+    // Filter active tasks that have remaining unfinished work
+    const activeCandidates = [];
+    tasks.forEach(task => {
+      if (task.completed) return;
+      const rawDur = Number(task.duration);
+      if (isNaN(rawDur) || rawDur <= 0) {
+        // Keep in candidates so pre-screening catches and reports invalid duration conflict
+        activeCandidates.push(task);
+        return;
+      }
+      const taskDoneMin = getTaskCompletedMinutes(task.id);
+      const unfinishedMin = Math.max(0, rawDur - taskDoneMin);
+      if (unfinishedMin <= 0) {
+        task.completed = true;
+        return;
+      }
+      activeCandidates.push({
+        ...task,
+        duration: unfinishedMin,
+        totalTaskDuration: rawDur,
+        completedMinutes: taskDoneMin
+      });
+    });
 
-    if (activeTasks.length === 0) {
+    if (activeCandidates.length === 0) {
+      const allTimelineBlocks = [...lockedTimelineBlocks];
+      allTimelineBlocks.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+      const generatedSessions = lockedSessions.map(s => ({
+        id: s.id,
+        sessionId: s.id,
+        taskId: s.taskId,
+        subject: s.subject,
+        duration: Number(s.duration) || 30,
+        priority: s.priority || 'medium',
+        deadline: s.deadline || '',
+        status: s.status,
+        studySplit: Math.min(Number(s.duration) || 30, 50),
+        breakSplit: (Number(s.duration) || 30) > 50 ? 10 : 5
+      }));
       updatePlanUI({
         totalDailyBudgetMinutes,
-        allocatedMinutes: 0,
+        allocatedMinutes,
         conflicts: [],
         unscheduledTasks: [],
-        scheduledTimelineBlocks: [],
-        generatedSessions: []
+        scheduledTimelineBlocks: allTimelineBlocks,
+        generatedSessions
       });
       return;
     }
@@ -474,7 +855,7 @@
     // Step 1: Pre-screen tasks for validity and overdue deadlines
     const validCandidates = [];
 
-    activeTasks.forEach(task => {
+    activeCandidates.forEach(task => {
       // Validate subject
       if (!task.subject || !task.subject.trim()) {
         const reason = 'Missing subject or course topic.';
@@ -523,6 +904,40 @@
       });
     });
 
+    // If remaining daily capacity is zero (already consumed by completed sessions)
+    if (remainingBudgetMinutes <= 0) {
+      validCandidates.forEach(task => {
+        const reason = `Daily Capacity Reached (${totalDailyBudgetMinutes}m): ${completedMinutesToday}m completed today; remaining daily capacity is 0m. Requires ${task.duration}m; carried over.`;
+        conflicts.push({ task, reason, type: 'insufficient_time' });
+        unscheduledTasks.push({ task, reason });
+      });
+
+      const allTimelineBlocks = [...lockedTimelineBlocks];
+      allTimelineBlocks.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+      const generatedSessions = lockedSessions.map(s => ({
+        id: s.id,
+        sessionId: s.id,
+        taskId: s.taskId,
+        subject: s.subject,
+        duration: Number(s.duration) || 30,
+        priority: s.priority || 'medium',
+        deadline: s.deadline || '',
+        status: s.status,
+        studySplit: Math.min(Number(s.duration) || 30, 50),
+        breakSplit: (Number(s.duration) || 30) > 50 ? 10 : 5
+      }));
+
+      updatePlanUI({
+        totalDailyBudgetMinutes,
+        allocatedMinutes,
+        conflicts,
+        unscheduledTasks,
+        scheduledTimelineBlocks: allTimelineBlocks,
+        generatedSessions
+      });
+      return;
+    }
+
     // Step 2: Deterministic Priority & Urgency Sorting
     const priorityWeight = { high: 3, medium: 2, low: 1 };
 
@@ -563,7 +978,6 @@
       }
 
       // Determine task session splitting
-      // Split into realistic focus blocks (<= 60m)
       let taskChunks = [];
       if (task.duration <= 60) {
         taskChunks = [task.duration];
@@ -592,13 +1006,12 @@
           break;
         }
 
-        // Exact capacity check: if chunk exceeds remaining budget, split into remaining budget
+        // Exact capacity check
         let scheduledChunkDur = chunkDuration;
         if (scheduledChunkDur > remainingBudgetMinutes) {
           if (remainingBudgetMinutes >= 15) {
             scheduledChunkDur = remainingBudgetMinutes;
           } else {
-            // Remaining fragment too small for a meaningful session (< 15 min buffer)
             break;
           }
         }
@@ -616,7 +1029,15 @@
           break;
         }
 
-        // Schedule Study Block
+        // Deterministic session ID (guaranteed non-colliding with historical sessions)
+        let sessionChunkId = `${task.id}-session-${cIdx}`;
+        if (sessionRecords[sessionChunkId]) {
+          sessionChunkId = `${task.id}-revised-${cIdx + 1}`;
+          if (sessionRecords[sessionChunkId]) {
+            sessionChunkId = `${task.id}-recovery-${Date.now()}-${cIdx}`;
+          }
+        }
+
         const startStr = formatTimeFromDate(blockStartTime);
         const endStr = formatTimeFromDate(blockEndTime);
 
@@ -624,8 +1045,10 @@
           ? `${task.subject} (Part ${cIdx + 1}/${taskChunks.length})`
           : task.subject;
 
-        scheduledTimelineBlocks.push({
+        newlyScheduledTimelineBlocks.push({
           type: 'study',
+          id: sessionChunkId,
+          sessionId: sessionChunkId,
           taskId: task.id,
           subject: sessionLabel,
           priority: task.priority,
@@ -635,20 +1058,22 @@
           endDate: blockEndTime,
           duration: scheduledChunkDur,
           deadline: task.deadline,
-          note: `Deterministic block targeting ${task.priority} priority objective`
+          status: 'planned',
+          note: `Revised session targeting ${task.priority} priority objective`
         });
 
-        // Add to generated study sessions list
         const studySplit = Math.min(scheduledChunkDur, 50);
         const breakSplit = scheduledChunkDur > 50 ? 10 : 5;
 
-        generatedSessions.push({
-          id: `${task.id}-session-${cIdx}`,
+        newlyGeneratedSessions.push({
+          id: sessionChunkId,
+          sessionId: sessionChunkId,
           taskId: task.id,
           subject: sessionLabel,
           duration: scheduledChunkDur,
           priority: task.priority,
           deadline: task.deadline,
+          status: 'planned',
           studySplit,
           breakSplit
         });
@@ -666,7 +1091,7 @@
           const breakStartTime = new Date(clockCursor);
           const breakEndTime = new Date(clockCursor.getTime() + breakDuration * 60000);
 
-          scheduledTimelineBlocks.push({
+          newlyScheduledTimelineBlocks.push({
             type: 'break',
             subject: 'Cognitive Recovery Interval',
             start: formatTimeFromDate(breakStartTime),
@@ -684,7 +1109,7 @@
       // If task could not be fully scheduled due to available hours
       if (taskRemainingDuration > 0) {
         if (!taskScheduledAny) {
-          const reason = `Workload Overflow: Requires ${task.duration}m, but daily study capacity (${totalDailyBudgetMinutes}m) is fully scheduled.`;
+          const reason = `Workload Overflow: Requires ${task.duration}m, but daily study capacity (${totalDailyBudgetMinutes}m) has only ${totalDailyBudgetMinutes - remainingBudgetMinutes}m remaining.`;
           conflicts.push({ task, reason, type: 'insufficient_time' });
           unscheduledTasks.push({ task, reason });
         } else {
@@ -695,12 +1120,35 @@
       }
     });
 
+    // Merge locked blocks with newly scheduled blocks
+    const allTimelineBlocks = [...lockedTimelineBlocks, ...newlyScheduledTimelineBlocks];
+    allTimelineBlocks.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+    const generatedSessions = [];
+    lockedSessions.forEach(s => {
+      generatedSessions.push({
+        id: s.id,
+        sessionId: s.id,
+        taskId: s.taskId,
+        subject: s.subject,
+        duration: Number(s.duration) || 30,
+        priority: s.priority || 'medium',
+        deadline: s.deadline || '',
+        status: s.status,
+        studySplit: Math.min(Number(s.duration) || 30, 50),
+        breakSplit: (Number(s.duration) || 30) > 50 ? 10 : 5
+      });
+    });
+    newlyGeneratedSessions.forEach(s => {
+      generatedSessions.push(s);
+    });
+
     updatePlanUI({
       totalDailyBudgetMinutes,
       allocatedMinutes,
       conflicts,
       unscheduledTasks,
-      scheduledTimelineBlocks,
+      scheduledTimelineBlocks: allTimelineBlocks,
       generatedSessions
     });
   }
@@ -708,6 +1156,7 @@
   // --- UI Update Renderer for Study Plan ---
 
   function updatePlanUI(plan) {
+    currentActivePlan = plan;
     const {
       totalDailyBudgetMinutes,
       allocatedMinutes,
@@ -745,7 +1194,25 @@
       }
     }
 
-    // 2. Conflict Banner
+    // 2. Deadline Collision Recovery Banner
+    if (recoveryBanner) {
+      if (recoveryNotice) {
+        recoveryBanner.style.display = 'flex';
+        if (recoveryBannerTitle) {
+          recoveryBannerTitle.textContent = recoveryNotice.title || 'Deadline Collision Recovery';
+        }
+        if (recoveryBannerBody) {
+          recoveryBannerBody.innerHTML = `
+            <div>${escapeHtml(recoveryNotice.message)}</div>
+            ${recoveryNotice.detail ? `<div style="margin-top:0.35rem; font-size:0.7rem; opacity:0.85;">${escapeHtml(recoveryNotice.detail)}</div>` : ''}
+          `;
+        }
+      } else {
+        recoveryBanner.style.display = 'none';
+      }
+    }
+
+    // 3. Conflict Banner
     if (conflictBanner) {
       if (conflicts.length === 0) {
         conflictBanner.style.display = 'none';
@@ -765,16 +1232,16 @@
       }
     }
 
-    // 3. Render Daily Timeline View
+    // 4. Render Daily Timeline View
     renderTimelineView(scheduledTimelineBlocks, conflicts);
 
-    // 4. Render Day Calendar Grid View
+    // 5. Render Day Calendar Grid View
     renderCalendarGridView(scheduledTimelineBlocks);
 
-    // 5. Generated Study Sessions Render
+    // 6. Generated Study Sessions Render
     renderSessionsView(generatedSessions);
 
-    // 6. Unscheduled Tasks Display (Never silently discard unscheduled tasks!)
+    // 7. Unscheduled Tasks Display (Never silently discard unscheduled tasks!)
     renderUnscheduledView(unscheduledTasks);
   }
 
@@ -815,30 +1282,55 @@
               <span class="slot-duration-pill">${block.duration} min</span>
             </div>
             <div class="slot-title">${escapeHtml(block.subject)}</div>
-            <p class="slot-note">${block.note}</p>
+            <p class="slot-note">${escapeHtml(block.note || '')}</p>
           </div>
         `;
       } else {
-        blockEl.innerHTML = `
-          <div class="timeline-time-col">
-            <span class="time-start">${block.start}</span>
-            <span class="time-end">${block.end}</span>
-          </div>
-          <div class="timeline-card">
-            <div class="timeline-slot-header">
-              <span class="slot-type-label">Deep Study Block</span>
-              <span class="slot-duration-pill">${block.duration} min</span>
-            </div>
-            <div class="slot-title">${escapeHtml(block.subject)}</div>
-            <p class="slot-note">${block.note}</p>
-            <div class="timeline-card-footer">
-              <span class="slot-deadline-badge">Due: ${formatDisplayDate(block.deadline)}</span>
-              <button type="button" class="card-complete-btn" data-action="quick-complete" data-task-id="${block.taskId}" title="Mark completed">
+        const isCompleted = block.status === 'completed';
+        const isMissed = block.status === 'missed';
+        const cardClass = isCompleted ? 'is-completed' : (isMissed ? 'is-missed' : '');
+        const typeLabel = isCompleted ? 'Completed Session' : (isMissed ? 'Missed Session' : 'Deep Study Block');
+
+        let actionHtml = '';
+        if (isCompleted) {
+          actionHtml = `<span class="card-completed-label">✓ Completed</span>`;
+        } else if (isMissed) {
+          actionHtml = `<span class="card-missed-label">✕ Missed</span>`;
+        } else {
+          actionHtml = `
+            <div class="slot-actions-group">
+              <button type="button" class="card-complete-btn" data-action="quick-complete" data-session-id="${block.sessionId || block.id}" data-task-id="${block.taskId}" title="Mark completed">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                   <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
                 Mark Done
               </button>
+              <button type="button" class="card-missed-btn" data-action="mark-missed" data-session-id="${block.sessionId || block.id}" data-task-id="${block.taskId}" title="Mark as missed" aria-label="Mark session for ${escapeHtml(block.subject)} as missed">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                Mark as Missed
+              </button>
+            </div>
+          `;
+        }
+
+        blockEl.innerHTML = `
+          <div class="timeline-time-col">
+            <span class="time-start">${block.start}</span>
+            <span class="time-end">${block.end}</span>
+          </div>
+          <div class="timeline-card ${cardClass}">
+            <div class="timeline-slot-header">
+              <span class="slot-type-label">${typeLabel}</span>
+              <span class="slot-duration-pill">${block.duration} min</span>
+            </div>
+            <div class="slot-title">${escapeHtml(block.subject)}</div>
+            <p class="slot-note">${escapeHtml(block.note || '')}</p>
+            <div class="timeline-card-footer">
+              <span class="slot-deadline-badge">Due: ${formatDisplayDate(block.deadline)}</span>
+              ${actionHtml}
             </div>
           </div>
         `;
@@ -911,8 +1403,37 @@
             `;
             slotContent.appendChild(breakEl);
           } else {
+            const isCompleted = b.status === 'completed';
+            const isMissed = b.status === 'missed';
+            const calCardClass = isCompleted ? 'is-completed' : (isMissed ? 'is-missed' : '');
+
+            let calActionHtml = '';
+            if (isCompleted) {
+              calActionHtml = `<span class="card-completed-label">✓ Completed</span>`;
+            } else if (isMissed) {
+              calActionHtml = `<span class="card-missed-label">✕ Missed</span>`;
+            } else {
+              calActionHtml = `
+                <div class="slot-actions-group">
+                  <button type="button" class="card-complete-btn" data-action="quick-complete" data-session-id="${b.sessionId || b.id}" data-task-id="${b.taskId}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                    Done
+                  </button>
+                  <button type="button" class="card-missed-btn" data-action="mark-missed" data-session-id="${b.sessionId || b.id}" data-task-id="${b.taskId}" title="Mark as missed" aria-label="Mark session for ${escapeHtml(b.subject)} as missed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <line x1="18" y1="6" x2="6" y2="18"></line>
+                      <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                    Missed
+                  </button>
+                </div>
+              `;
+            }
+
             const blockEl = document.createElement('div');
-            blockEl.className = 'calendar-session-block';
+            blockEl.className = `calendar-session-block ${calCardClass}`;
             blockEl.innerHTML = `
               <div class="cal-block-left">
                 <div class="cal-title-row">
@@ -924,12 +1445,7 @@
                   <span class="cal-tag-priority">Priority: ${b.priority}</span>
                 </div>
               </div>
-              <button type="button" class="card-complete-btn" data-action="quick-complete" data-task-id="${b.taskId}">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-                Done
-              </button>
+              ${calActionHtml}
             `;
             slotContent.appendChild(blockEl);
           }
@@ -963,8 +1479,42 @@
 
     generatedSessions.forEach((session, index) => {
       const sessionCard = document.createElement('div');
-      sessionCard.className = 'session-card';
+      const isCompleted = session.status === 'completed';
+      const isMissed = session.status === 'missed';
+      const sessionStatusClass = isCompleted ? 'is-completed' : (isMissed ? 'is-missed' : '');
 
+      let statusBadgeHtml = '';
+      let sessionActionHtml = '';
+
+      if (isCompleted) {
+        statusBadgeHtml = `<span class="session-status-badge status-completed">Completed</span>`;
+        sessionActionHtml = `<span class="card-completed-label">✓ Completed</span>`;
+      } else if (isMissed) {
+        statusBadgeHtml = `<span class="session-status-badge status-missed">Missed</span>`;
+        sessionActionHtml = `<span class="card-missed-label">✕ Missed</span>`;
+      } else {
+        const isFirst = index === 0;
+        statusBadgeHtml = `<span class="session-status-badge ${isFirst ? 'status-ready' : 'status-scheduled'}">${isFirst ? 'Next Up' : 'Scheduled'}</span>`;
+        sessionActionHtml = `
+          <div class="slot-actions-group">
+            <button type="button" class="card-complete-btn" data-action="quick-complete" data-session-id="${session.sessionId || session.id}" data-task-id="${session.taskId}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              Mark Done
+            </button>
+            <button type="button" class="card-missed-btn" data-action="mark-missed" data-session-id="${session.sessionId || session.id}" data-task-id="${session.taskId}" title="Mark as missed" aria-label="Mark session for ${escapeHtml(session.subject)} as missed">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+              Mark as Missed
+            </button>
+          </div>
+        `;
+      }
+
+      sessionCard.className = `session-card ${sessionStatusClass}`;
       sessionCard.innerHTML = `
         <div class="session-card-top">
           <span class="session-order-tag">
@@ -974,19 +1524,17 @@
             </svg>
             Session ${index + 1}
           </span>
-          <span class="session-status-badge ${index === 0 ? 'status-ready' : 'status-scheduled'}">
-            ${index === 0 ? 'Next Up' : 'Scheduled'}
-          </span>
+          ${statusBadgeHtml}
         </div>
         <div class="session-subject-title">${escapeHtml(session.subject)}</div>
         <div class="session-breakdown">
           <span class="breakdown-item">
             <span class="breakdown-dot"></span>
-            ${session.studySplit}m Focused Study
+            ${session.studySplit || Math.min(session.duration, 50)}m Focused Study
           </span>
           <span class="breakdown-item">
             <span class="breakdown-dot"></span>
-            ${session.breakSplit}m Break
+            ${session.breakSplit || 5}m Break
           </span>
           <span class="breakdown-item">
             <span class="breakdown-dot"></span>
@@ -994,12 +1542,7 @@
           </span>
         </div>
         <div class="session-actions">
-          <button type="button" class="card-complete-btn" data-action="quick-complete" data-task-id="${session.taskId}">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-              <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-            Mark Task Done
-          </button>
+          ${sessionActionHtml}
         </div>
       `;
 
@@ -1254,6 +1797,15 @@
       const task = tasks.find(t => t.id === taskId);
       if (task) {
         task.completed = !task.completed;
+        if (!task.completed) {
+          // If task was re-opened, clear completed sessions for this task
+          Object.keys(sessionRecords).forEach(sid => {
+            if (sessionRecords[sid] && sessionRecords[sid].taskId === taskId && sessionRecords[sid].status === 'completed') {
+              delete sessionRecords[sid];
+            }
+          });
+          saveSessionRecords();
+        }
         saveTasks();
         renderTasks();
       }
@@ -1264,6 +1816,13 @@
         resetFormState();
       }
       tasks = tasks.filter(t => t.id !== taskId);
+      // Clean up session records for this deleted task
+      Object.keys(sessionRecords).forEach(sid => {
+        if (sessionRecords[sid] && sessionRecords[sid].taskId === taskId) {
+          delete sessionRecords[sid];
+        }
+      });
+      saveSessionRecords();
       saveTasks();
       renderTasks();
     }
@@ -1272,9 +1831,22 @@
   function handleQuickComplete(e) {
     const completeBtn = e.target.closest('[data-action="quick-complete"]');
     if (!completeBtn) return;
+    const sessionId = completeBtn.dataset.sessionId;
     const taskId = completeBtn.dataset.taskId;
-    if (taskId) {
+    if (sessionId) {
+      markSessionCompleted(sessionId, taskId);
+    } else if (taskId) {
       markTaskCompleted(taskId);
+    }
+  }
+
+  function handleMarkMissed(e) {
+    const missedBtn = e.target.closest('[data-action="mark-missed"]');
+    if (!missedBtn) return;
+    const sessionId = missedBtn.dataset.sessionId;
+    const taskId = missedBtn.dataset.taskId;
+    if (sessionId) {
+      markSessionMissed(sessionId, taskId);
     }
   }
 
@@ -1409,10 +1981,19 @@
 
     if (taskListContainer) taskListContainer.addEventListener('click', handleTaskAction);
 
-    // Global listeners for quick-completion buttons across Timeline, Calendar, and Sessions
-    if (scheduleTimeline) scheduleTimeline.addEventListener('click', handleQuickComplete);
-    if (scheduleCalendarGrid) scheduleCalendarGrid.addEventListener('click', handleQuickComplete);
-    if (sessionsContainer) sessionsContainer.addEventListener('click', handleQuickComplete);
+    // Global listeners for completion & recovery buttons across Timeline, Calendar, and Sessions
+    if (scheduleTimeline) {
+      scheduleTimeline.addEventListener('click', handleQuickComplete);
+      scheduleTimeline.addEventListener('click', handleMarkMissed);
+    }
+    if (scheduleCalendarGrid) {
+      scheduleCalendarGrid.addEventListener('click', handleQuickComplete);
+      scheduleCalendarGrid.addEventListener('click', handleMarkMissed);
+    }
+    if (sessionsContainer) {
+      sessionsContainer.addEventListener('click', handleQuickComplete);
+      sessionsContainer.addEventListener('click', handleMarkMissed);
+    }
 
     durationChips.forEach(chip => {
       chip.addEventListener('click', handleChipClick);
