@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/api/llm-status", "destination": "/api/llm_status" },
+    { "source": "/api/generate-plan", "destination": "/api/generate_plan" }
+  ]
+}

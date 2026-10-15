@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Study Planner - Daily Focus & Task Scheduler</title>
+  <meta name="description" content="A minimalist, premium study planner for structuring subjects, deadlines, estimated durations, and daily study schedules.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Top Navigation Header -->
+    <header class="app-header" id="main-header">
+      <div class="header-inner">
+        <div class="brand-group">
+          <div class="brand-mark" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+              <line x1="12" y1="6" x2="16" y2="6"></line>
+              <line x1="12" y1="10" x2="16" y2="10"></line>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <h1 class="brand-title">Smart Study Planner</h1>
+            <span class="brand-subtitle">Plan with clarity, study with purpose</span>
+          </div>
+        </div>
+
+        <div class="header-meta">
+          <div class="date-badge" id="current-date-badge">
+            <span class="date-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
+            </span>
+            <span id="header-date-text">Today's Schedule</span>
+          </div>
+          <div class="status-summary-pill" id="quick-status-pill">
+            <span class="status-dot"></span>
+            <span id="quick-status-text">Planner Active</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="dashboard-container" id="planner-dashboard">
+      
+      <!-- Primary 2-Column Responsive Layout -->
+      <div class="dashboard-grid">
+        
+        <!-- LEFT COLUMN: Task Input Form & Task Management -->
+        <section class="dashboard-column" id="task-management-col" aria-label="Task Management">
+          
+          <!-- Study-Task Input Form Card -->
+          <article class="planner-card input-card" id="task-form-card">
+            <div class="card-header">
+              <div class="header-icon-title">
+                <span class="card-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </span>
+                <div>
+                  <h2 class="card-title" id="form-card-title">Add Study Task</h2>
+                  <p class="card-desc" id="form-card-desc">Define task parameters to generate balanced study sessions</p>
+                </div>
+              </div>
+            </div>
+
+            <form id="study-task-form" class="task-form" novalidate>
+              <input type="hidden" id="editing-task-id" name="editingTaskId" value="">
+
+              <!-- Subject Field -->
+              <div class="form-group">
+                <label for="task-subject" class="form-label">
+                  Subject / Topic <span class="required-mark">*</span>
+                </label>
+                <div class="input-wrapper">
+                  <input 
+                    type="text" 
+                    id="task-subject" 
+                    name="subject" 
+                    class="form-input" 
+                    placeholder="e.g. Advanced Calculus, Cellular Biology" 
+                    required 
+                    autocomplete="off"
+                  >
+                </div>
+                <div class="inline-error" id="subject-error" role="alert"></div>
+                <span class="field-hint" id="subject-hint">Enter the course or topic you need to master</span>
+              </div>
+
+              <!-- Deadline Field -->
+              <div class="form-group">
+                <label for="task-deadline" class="form-label">
+                  Deadline Date & Time <span class="required-mark">*</span>
+                </label>
+                <div class="input-wrapper">
+                  <input 
+                    type="datetime-local" 
+                    id="task-deadline" 
+                    name="deadline" 
+                    class="form-input" 
+                    required
+                  >
+                </div>
+                <div class="inline-error" id="deadline-error" role="alert"></div>
+                <span class="field-hint" id="deadline-hint">When does this task or exam review need to be completed?</span>
+              </div>
+
+              <!-- Estimated Duration & Quick Presets -->
+              <div class="form-group">
+                <label for="task-duration" class="form-label">
+                  Estimated Duration (Minutes) <span class="required-mark">*</span>
+                </label>
+                <div class="duration-input-row">
+                  <input 
+                    type="number" 
+                    id="task-duration" 
+                    name="duration" 
+                    class="form-input duration-number" 
+                    placeholder="e.g. 60" 
+                    min="1" 
+                    max="600" 
+                    step="5" 
+                    required
+                  >
+                  <span class="unit-tag">min</span>
+                </div>
+                <div class="inline-error" id="duration-error" role="alert"></div>
+                <div class="duration-chips" aria-label="Quick duration selection">
+                  <span class="chips-label">Quick select:</span>
+                  <button type="button" class="chip-btn" data-duration="30">30m</button>
+                  <button type="button" class="chip-btn" data-duration="45">45m</button>
+                  <button type="button" class="chip-btn" data-duration="60">60m</button>
+                  <button type="button" class="chip-btn" data-duration="90">90m</button>
+                  <button type="button" class="chip-btn" data-duration="120">120m</button>
+                </div>
+              </div>
+
+              <!-- Priority Selector -->
+              <div class="form-group">
+                <label class="form-label">
+                  Priority Level <span class="required-mark">*</span>
+                </label>
+                <div class="priority-options" role="radiogroup" aria-label="Task Priority">
+                  <label class="priority-label" for="priority-low">
+                    <input type="radio" id="priority-low" name="priority" value="low" class="priority-radio">
+                    <span class="priority-pill pill-low">
+                      <span class="pill-dot"></span> Low
+                    </span>
+                  </label>
+
+                  <label class="priority-label" for="priority-medium">
+                    <input type="radio" id="priority-medium" name="priority" value="medium" class="priority-radio" checked>
+                    <span class="priority-pill pill-medium">
+                      <span class="pill-dot"></span> Medium
+                    </span>
+                  </label>
+
+                  <label class="priority-label" for="priority-high">
+                    <input type="radio" id="priority-high" name="priority" value="high" class="priority-radio">
+                    <span class="priority-pill pill-high">
+                      <span class="pill-dot"></span> High
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Form Action Buttons -->
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary" id="form-submit-btn">
+                  <span class="btn-icon" aria-hidden="true" id="form-submit-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                      <line x1="12" y1="5" x2="12" y2="19"></line>
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                  </span>
+                  <span id="form-submit-text">Add Study Task</span>
+                </button>
+                <button type="button" class="btn btn-cancel" id="cancel-edit-btn" style="display: none;">Cancel</button>
+                <button type="reset" class="btn btn-secondary" id="reset-task-btn">Reset</button>
+              </div>
+            </form>
+          </article>
+
+          <!-- Task Completion Status & Active Tasks Card -->
+          <article class="planner-card" id="task-status-card">
+            <div class="card-header space-between">
+              <div>
+                <h2 class="card-title">Task Completion Status</h2>
+                <p class="card-desc">Track progress across all active study assignments</p>
+              </div>
+              <div class="progress-numeric" id="progress-percentage-label">50% Completed</div>
+            </div>
+
+            <!-- Visual Progress Meter -->
+            <div class="progress-container" aria-label="Overall study progress">
+              <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="task-progress-bar" style="width: 50%;"></div>
+              </div>
+              <div class="progress-meta">
+                <span id="tasks-completed-count">2 of 4 tasks finished</span>
+                <span id="total-study-time">Total Est: 210 min</span>
+              </div>
+            </div>
+
+            <!-- Task List Container -->
+            <div class="tasks-subheading">
+              <h3 class="subsection-title">All Study Tasks</h3>
+              <div class="task-filter-chips">
+                <button type="button" class="filter-tab active" data-filter="all" id="filter-all">All (<span id="count-all">4</span>)</button>
+                <button type="button" class="filter-tab" data-filter="active" id="filter-active">Active (<span id="count-active">2</span>)</button>
+                <button type="button" class="filter-tab" data-filter="completed" id="filter-completed">Done (<span id="count-completed">2</span>)</button>
+              </div>
+            </div>
+
+            <div class="tasks-list" id="tasks-list-container" role="list">
+              <!-- Dynamically populated via app.js -->
+            </div>
+          </article>
+
+        </section>
+
+        <!-- RIGHT COLUMN: Daily Schedule Area & Generated Study Sessions -->
+        <section class="dashboard-column" id="schedule-sessions-col" aria-label="Schedule and Sessions">
+          
+          <!-- Daily Schedule Area Card -->
+          <article class="planner-card schedule-card" id="daily-schedule-card">
+            <div class="card-header space-between">
+              <div class="header-icon-title">
+                <span class="card-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                  </svg>
+                </span>
+                <div>
+                  <h2 class="card-title">Daily Schedule Area</h2>
+                  <p class="card-desc">Deterministic schedule prioritizing urgency and deadlines</p>
+                </div>
+              </div>
+              <div class="header-badges-row">
+                <span class="engine-badge" title="Generated strictly using a local deterministic scheduling algorithm without external AI APIs">
+                  Local Algorithm
+                </span>
+                <span class="timeline-badge" id="schedule-block-count">0 Blocks Planned</span>
+              </div>
+            </div>
+
+            <!-- Available Daily Study Hours Budget -->
+            <div class="planner-config-panel" id="planner-config-panel">
+              <div class="config-row">
+                <div class="config-label-group">
+                  <label for="available-study-hours" class="config-label">
+                    Available Study Hours Today
+                  </label>
+                  <span class="config-hint">Maximum daily study capacity</span>
+                </div>
+                <div class="hours-control">
+                  <input 
+                    type="number" 
+                    id="available-study-hours" 
+                    class="form-input hours-input" 
+                    value="4" 
+                    min="0.5" 
+                    max="16" 
+                    step="0.5"
+                    aria-label="Available Daily Study Hours"
+                  >
+                  <span class="unit-tag">hrs</span>
+                </div>
+              </div>
+              <div class="hours-quick-presets" aria-label="Quick preset study hours">
+                <span class="chips-label">Presets:</span>
+                <button type="button" class="hours-chip-btn" data-hours="2">2h</button>
+                <button type="button" class="hours-chip-btn active" data-hours="4">4h</button>
+                <button type="button" class="hours-chip-btn" data-hours="6">6h</button>
+                <button type="button" class="hours-chip-btn" data-hours="8">8h</button>
+              </div>
+
+              <!-- Allocation Capacity Meter -->
+              <div class="allocation-meter-wrapper">
+                <div class="allocation-header">
+                  <span id="allocation-stats-text">0 min / 240 min allocated (0%)</span>
+                  <span id="allocation-capacity-badge" class="capacity-badge">Within Budget</span>
+                </div>
+                <div class="allocation-track">
+                  <div id="allocation-fill" class="allocation-fill" style="width: 0%;"></div>
+                </div>
+              </div>
+
+              <!-- Dedicated Study Plan Generation Button -->
+              <div class="generate-action-row">
+                <button type="button" class="btn btn-primary generate-plan-btn" id="generate-plan-btn" aria-label="Generate Study Plan">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="generate-btn-icon" aria-hidden="true">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                  </svg>
+                  <span id="generate-plan-btn-text">Generate Study Plan</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Conflict & Unscheduled Notice Banner (Displayed when conflicts arise) -->
+            <div class="conflict-banner" id="conflict-banner" style="display: none;" role="alert">
+              <div class="conflict-banner-header">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="8" x2="12" y2="12"></line>
+                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <span id="conflict-banner-title">Scheduling Conflict Report</span>
+              </div>
+              <div class="conflict-list" id="conflict-list">
+                <!-- Conflict items rendered dynamically -->
+              </div>
+            </div>
+
+            <!-- Schedule View Switcher: Timeline vs Day Calendar -->
+            <div class="schedule-view-switcher" role="tablist" aria-label="Schedule View">
+              <button type="button" class="view-switch-btn active" id="view-timeline-btn" role="tab" aria-selected="true" data-view="timeline">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="8" y1="6" x2="21" y2="6"></line>
+                  <line x1="8" y1="12" x2="21" y2="12"></line>
+                  <line x1="8" y1="18" x2="21" y2="18"></line>
+                  <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                  <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                  <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+                Timeline View
+              </button>
+              <button type="button" class="view-switch-btn" id="view-calendar-btn" role="tab" aria-selected="false" data-view="calendar">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="16" y1="2" x2="16" y2="6"></line>
+                  <line x1="8" y1="2" x2="8" y2="6"></line>
+                  <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                Day Calendar View
+              </button>
+            </div>
+
+            <!-- Schedule Timeline Flow -->
+            <div class="schedule-timeline" id="daily-schedule-timeline">
+              <!-- Timeline items populated via app.js -->
+            </div>
+
+            <!-- Simple Day Calendar View -->
+            <div class="schedule-calendar-grid" id="daily-schedule-calendar" style="display: none;">
+              <!-- Calendar hourly slots populated via app.js -->
+            </div>
+          </article>
+
+          <!-- Generated Study Sessions Card -->
+          <article class="planner-card sessions-card" id="generated-sessions-card">
+            <div class="card-header space-between">
+              <div class="header-icon-title">
+                <span class="card-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                  </svg>
+                </span>
+                <div>
+                  <h2 class="card-title">Generated Study Sessions</h2>
+                  <p class="card-desc">Optimized study intervals mapped from your active tasks</p>
+                </div>
+              </div>
+              <span class="sessions-counter-badge" id="sessions-counter-badge">0 Sessions Ready</span>
+            </div>
+
+            <div class="sessions-list" id="generated-sessions-container">
+              <!-- Session cards dynamically rendered via app.js -->
+            </div>
+
+            <!-- Unscheduled Tasks Area (Ensures unscheduled tasks are never discarded) -->
+            <div class="unscheduled-section" id="unscheduled-section" style="display: none;">
+              <div class="unscheduled-header">
+                <h3 class="subsection-title">Unscheduled Tasks</h3>
+                <span class="unscheduled-count-tag" id="unscheduled-count-tag">0 Tasks</span>
+              </div>
+              <p class="unscheduled-desc">The following active tasks could not be scheduled in today's plan:</p>
+              <div class="unscheduled-list" id="unscheduled-list">
+                <!-- Unscheduled tasks list rendered dynamically -->
+              </div>
+            </div>
+          </article>
+
+        </section>
+
+      </div>
+    </main>
+
+    <!-- Clean Minimalist Footer -->
+    <footer class="app-footer">
+      <div class="footer-inner">
+        <p class="footer-text">Smart Study Planner &bull; Focused Learning Architecture</p>
+        <span class="palette-indicator" title="Color palette strictly restricted to Aqua, Off-white, Deep Teal, Mist Teal, and Charcoal">
+          <span class="swatch" style="background-color: #173744;" title="Deep Teal (#173744)"></span>
+          <span class="swatch" style="background-color: #B7DCE2;" title="Aqua (#B7DCE2)"></span>
+          <span class="swatch" style="background-color: #D8E9E8;" title="Mist Teal (#D8E9E8)"></span>
+          <span class="swatch" style="background-color: #F7F6F0;" title="Off-White (#F7F6F0)"></span>
+          <span class="swatch" style="background-color: #252D32;" title="Charcoal (#252D32)"></span>
+        </span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
